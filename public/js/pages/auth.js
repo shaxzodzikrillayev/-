@@ -139,7 +139,9 @@ export async function registerPage() {
   const first = el('input.input', { name: 'firstName', required: true, placeholder: 'Иван', autocomplete: 'given-name' });
   const last = el('input.input', { name: 'lastName', required: true, placeholder: 'Петров', autocomplete: 'family-name' });
   const middle = el('input.input', { name: 'middleName', placeholder: 'Отчество (необязательно)' });
-  const username = el('input.input', { name: 'username', required: true, placeholder: 'ivanpetrov', autocomplete: 'username', pattern: '[A-Za-z0-9_.-]{3,24}' });
+  // Дефис в конце класса символов обязателен к экранированию: HTML `pattern`
+  // компилируется с флагом `v`, где голый `-` внутри [] — синтаксическая ошибка.
+  const username = el('input.input', { name: 'username', required: true, placeholder: 'ivanpetrov', autocomplete: 'username', pattern: '[A-Za-z0-9_.\\-]{3,24}' });
   const password = el('input.input', { name: 'password', type: 'password', required: true, minlength: 6, autocomplete: 'new-password', placeholder: 'минимум 6 символов' });
   const confirm = el('input.input', { name: 'confirm', type: 'password', required: true, autocomplete: 'new-password' });
   // Команду на регистрации не выбирают: состав формирует староста через «Ученики».

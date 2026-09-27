@@ -127,7 +127,7 @@ export async function usersPage(ctx) {
     const last = el('input.input', { value: u?.lastName ?? '', required: true, placeholder: 'Петров' });
     const middle = el('input.input', { value: u?.middleName ?? '', placeholder: 'Отчество' });
     const username = el('input.input', {
-      value: u?.username ?? '', required: !u, pattern: '[A-Za-z0-9_.-]{3,24}',
+      value: u?.username ?? '', required: !u, pattern: '[A-Za-z0-9_.\\-]{3,24}',
       placeholder: 'ivanpetrov', disabled: Boolean(u),
     });
     const role = el('select.select', { disabled: Boolean(u) },
