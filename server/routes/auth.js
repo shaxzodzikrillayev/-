@@ -1,25 +1,38 @@
 /**
  * Регистрация / вход / выход / профиль.
- * Ключевое правило безопасности: публичная регистрация может создать ТОЛЬКО
- * ответственного за дежурство. Роли «староста» и «куратор» на сервере
- * неприступны — их выдаёт действующий староста из панели управления.
+ * Публичная регистрация создаёт ученика без команды — состав формирует
+ * староста в разделе «Ученики». Роли «куратор» и «староста» требуют
+ * кода приглашения, который хранится в настройках и выдаётся старостой.
  */
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { q, transaction, audit, getSetting } from '../db.js';
 import { hashPassword, verifyPassword, passwordIssues } from '../auth-utils.js';
 import { createSession, destroySession, destroyAllSessions, requireAuth, rateLimit, clientIp } from '../middleware.js';
 import { uploadAvatar, verifyImage, removeAvatar } from '../uploads.js';
 import {
-  publicUser, str, username as vUsername, personName, int, bad, conflict, HttpError,
+  publicUser, str, username as vUsername, personName, bad, conflict, HttpError,
 } from '../util.js';
 import { permissionsForClient, ROLES, ROLE_LABELS } from '../permissions.js';
 
 const router = express.Router();
 
-const REGISTERABLE_ROLE = ROLES.responsible;
+/** Роли, доступные при регистрации, и код, который открывает каждую из них. */
+const CODE_ROLES = {
+  [ROLES.curator]: 'invite_code_curator',
+  [ROLES.starosta]: 'invite_code_starosta',
+};
 const EXT_BY_MIME = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' };
+
+/** Сравнение кодов без утечки времени. */
+function codeMatches(given, expected) {
+  if (!expected) return false;
+  const a = Buffer.from(String(given));
+  const b = Buffer.from(String(expected));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 export function sessionPayload(user, csrfToken = null) {
   const teams = q.all('SELECT id, number, name, color, responsible_id FROM teams ORDER BY number');
@@ -79,7 +92,7 @@ router.get('/me', (req, res) => {
 /* ───────────────────── POST /api/auth/register ───────────────────── */
 router.post(
   '/register',
-  rateLimit({ limit: 8, windowMs: 10 * 60_000, message: 'Слишком много регистраций. Попробуйте позже.' }),
+  rateLimit({ limit: 40, windowMs: 10 * 60_000, message: 'Слишком много регистраций. Попробуйте позже.' }),
   (req, res, next) => uploadAvatar(req, res, (err) => (err ? next(err) : next())),
   (req, res, next) => {
     let savedAvatar = null;
@@ -88,13 +101,18 @@ router.post(
         throw new HttpError(403, 'Регистрация в системе закрыта', 'REGISTRATION_CLOSED');
       }
 
-      const requestedRole = str(req.body.role, 'Роль', { max: 20 });
-      if (requestedRole !== REGISTERABLE_ROLE) {
-        throw new HttpError(
-          403,
-          'Роль «Староста» и «Куратор» нельзя выбрать самостоятельно — их назначает действующий староста класса.',
-          'ROLE_NOT_ALLOWED',
-        );
+      // Ученик регистрируется без команды и без кода: состав формирует староста.
+      // Куратор и староста — только по коду приглашения из настроек.
+      const requestedRole = str(req.body.role ?? ROLES.member, 'Роль', { max: 20 });
+      let role = ROLES.member;
+      if (requestedRole !== ROLES.member) {
+        const settingKey = CODE_ROLES[requestedRole];
+        if (!settingKey) throw new HttpError(403, 'Такую роль выбрать нельзя', 'ROLE_NOT_ALLOWED');
+        const code = str(req.body.code ?? '', 'Код', { required: false, max: 64, trim: false });
+        if (!codeMatches(code, getSetting(settingKey))) {
+          throw new HttpError(403, 'Неверный код приглашения', 'BAD_INVITE_CODE');
+        }
+        role = requestedRole;
       }
 
       const login = vUsername(req.body.username);
@@ -105,10 +123,7 @@ router.post(
       const firstName = personName(req.body.firstName, 'Имя');
       const lastName = personName(req.body.lastName, 'Фамилия');
       const middleName = personName(req.body.middleName, 'Отчество', { required: false });
-      const teamId = int(req.body.teamId, 'Команда', { min: 1 });
 
-      const team = q.get('SELECT * FROM teams WHERE id = ?', teamId);
-      if (!team) throw bad('Выберите команду из списка', 'VALIDATION');
       if (q.get('SELECT id FROM users WHERE username_lc = ?', login)) {
         throw conflict('Такой логин уже занят', 'LOGIN_TAKEN');
       }
@@ -129,25 +144,17 @@ router.post(
 
       const userId = transaction(() => {
         const ts = new Date().toISOString();
+        // team_id остаётся NULL: ученик приходит без команды, ответственного
+        // и состав команды назначает староста в разделе «Ученики».
         const r = q.run(
           `INSERT INTO users (username, username_lc, password_hash, role, first_name, last_name, middle_name,
                               avatar, team_id, is_active, must_change_password, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,1,0,?,?)`,
-          login, login, hashPassword(password), REGISTERABLE_ROLE, firstName, lastName, middleName,
-          file.filename, teamId, ts, ts,
+           VALUES (?,?,?,?,?,?,?,?,NULL,1,0,?,?)`,
+          login, login, hashPassword(password), role, firstName, lastName, middleName,
+          file.filename, ts, ts,
         );
         const id = Number(r.lastInsertRowid);
-        q.run(
-          `INSERT INTO team_members (team_id, user_id, position, created_at) VALUES (?,?,0,?)
-           ON CONFLICT(team_id, user_id) DO NOTHING`,
-          teamId, id, ts,
-        );
-        // Если у команды не было ответственного — новый становится им
-        q.run(
-          'UPDATE teams SET responsible_id = ?, updated_at = ? WHERE id = ? AND responsible_id IS NULL',
-          id, ts, teamId,
-        );
-        audit(id, 'auth.register', 'user', id, { role: REGISTERABLE_ROLE, teamId }, clientIp(req));
+        audit(id, 'auth.register', 'user', id, { role }, clientIp(req));
         return id;
       });
 

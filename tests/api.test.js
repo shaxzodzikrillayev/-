@@ -152,101 +152,113 @@ test('bootstrap отдаёт настройки класса без автори
   assert.equal(r.data.canRegister, true);
 });
 
-test('регистрация отклоняет роль «староста» (нет самостоятельной эскалации)', async () => {
-  const c = new Client();
+/** Коды приглашения читаются напрямую из БД теста. */
+function inviteCode(key) {
+  const db = new DatabaseSync(DB_PATH, { readOnly: true });
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  db.close();
+  assert.ok(row?.value, `в настройках нет ключа ${key}`);
+  return row.value;
+}
+
+function regForm({ role = 'member', username, code, teamId, avatar = avatarBlob(), password = 'parol123' }) {
   const fd = new FormData();
-  fd.set('role', 'starosta');
-  fd.set('username', 'hacker1');
-  fd.set('password', 'secret123');
-  fd.set('firstName', 'Хакер');
-  fd.set('lastName', 'Злой');
-  fd.set('middleName', 'Ильич');
-  fd.set('teamId', '1');
-  fd.set('avatar', avatarBlob(), 'a.png');
-  const r = await c.raw('POST', '/api/auth/register', { body: fd });
+  if (role) fd.set('role', role);
+  fd.set('username', username);
+  fd.set('password', password);
+  fd.set('firstName', 'Тест');
+  fd.set('lastName', 'Тестов');
+  if (code) fd.set('code', code);
+  if (teamId) fd.set('teamId', teamId);
+  if (avatar) fd.set('avatar', avatar, 'a.png');
+  return fd;
+}
+
+test('регистрация без кода не даёт роль «староста»', async () => {
+  const c = new Client();
+  const r = await c.raw('POST', '/api/auth/register', { body: regForm({ role: 'starosta', username: 'hacker1' }) });
   assert.equal(r.status, 403);
-  assert.equal(r.data.code, 'ROLE_NOT_ALLOWED');
+  assert.equal(r.data.code, 'BAD_INVITE_CODE');
 });
 
-test('регистрация отклоняет роль «куратор»', async () => {
+test('регистрация без кода не даёт роль «куратор»', async () => {
   const c = new Client();
-  const fd = new FormData();
-  fd.set('role', 'curator');
-  fd.set('username', 'hacker2');
-  fd.set('password', 'secret123');
-  fd.set('firstName', 'Хакер');
-  fd.set('lastName', 'Двойной');
-  fd.set('teamId', '1');
-  fd.set('avatar', avatarBlob(), 'a.png');
-  const r = await c.raw('POST', '/api/auth/register', { body: fd });
+  const r = await c.raw('POST', '/api/auth/register', { body: regForm({ role: 'curator', username: 'hacker2' }) });
   assert.equal(r.status, 403);
-  assert.equal(r.data.code, 'ROLE_NOT_ALLOWED');
+  assert.equal(r.data.code, 'BAD_INVITE_CODE');
+});
+
+test('неверный код приглашения отклоняется', async () => {
+  const c = new Client();
+  for (const role of ['starosta', 'curator']) {
+    const r = await c.raw('POST', '/api/auth/register', {
+      body: regForm({ role, username: `wrongcode-${role}`, code: '0000-НЕТ-ТАКОГО' }),
+    });
+    assert.equal(r.status, 403, `${role}: ${r.status} ${JSON.stringify(r.data)}`);
+    assert.equal(r.data.code, 'BAD_INVITE_CODE');
+  }
+});
+
+test('верный код приглашения регистрирует куратора', async () => {
+  const c = new Client();
+  const r = await c.raw('POST', '/api/auth/register', {
+    body: regForm({ role: 'curator', username: 'kurator2', code: inviteCode('invite_code_curator') }),
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.user.role, 'curator');
+  assert.ok(r.data.permissions.includes('photo.review'));
+  assert.ok(!r.data.permissions.includes('settings.manage'));
+});
+
+test('верный код приглашения регистрирует старосту', async () => {
+  const c = new Client();
+  const r = await c.raw('POST', '/api/auth/register', {
+    body: regForm({ role: 'starosta', username: 'starosta2', code: inviteCode('invite_code_starosta') }),
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.user.role, 'starosta');
+  assert.ok(r.data.permissions.includes('settings.manage'));
 });
 
 test('регистрация требует фото профиля', async () => {
   const c = new Client();
-  const fd = new FormData();
-  fd.set('role', 'responsible');
-  fd.set('username', 'nophoto1');
-  fd.set('password', 'secret123');
-  fd.set('firstName', 'Без');
-  fd.set('lastName', 'Фото');
-  fd.set('teamId', '3');
-  const r = await c.raw('POST', '/api/auth/register', { body: fd });
+  const r = await c.raw('POST', '/api/auth/register', { body: regForm({ username: 'nophoto1', avatar: null }) });
   assert.equal(r.status, 400);
   assert.match(r.data.error, /фото/i);
 });
 
-test('регистрация требует команду', async () => {
+test('регистрация больше не требует команду — ученик приходит без неё', async () => {
   const c = new Client();
-  const fd = new FormData();
-  fd.set('role', 'responsible');
-  fd.set('username', 'noteam1');
-  fd.set('password', 'secret123');
-  fd.set('firstName', 'Без');
-  fd.set('lastName', 'Команды');
-  fd.set('avatar', avatarBlob(), 'a.png');
-  const r = await c.raw('POST', '/api/auth/register', { body: fd });
-  assert.equal(r.status, 400);
+  const r = await c.raw('POST', '/api/auth/register', { body: regForm({ username: 'noteam1' }) });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.user.role, 'member');
+  assert.equal(r.data.user.teamNumber, null);
+  assert.equal(r.data.user.teamId, null);
 });
 
 test('регистрация отвечает 400 на неимиджевое «изображение»', async () => {
   const c = new Client();
-  const fd = new FormData();
-  fd.set('role', 'responsible');
-  fd.set('username', 'fakeimg1');
-  fd.set('password', 'secret123');
-  fd.set('firstName', 'Подделка');
-  fd.set('lastName', 'Картинки');
-  fd.set('teamId', '3');
-  fd.set('avatar', new Blob([Buffer.from('#!/bin/sh\necho hi')], { type: 'image/png' }), 'x.png');
-  const r = await c.raw('POST', '/api/auth/register', { body: fd });
+  const r = await c.raw('POST', '/api/auth/register', {
+    body: regForm({
+      username: 'fakeimg1',
+      avatar: new Blob([Buffer.from('#!/bin/sh' + String.fromCharCode(10) + 'echo hi')], { type: 'image/png' }),
+    }),
+  });
   assert.equal(r.status, 400);
   assert.equal(r.data.code, 'BAD_FILE');
 });
 
-test('успешная регистрация создаёт ответственного и открывает сессию', async () => {
+test('успешная регистрация создаёт ученика без команды и открывает сессию', async () => {
   const c = new Client();
-  const fd = new FormData();
-  fd.set('role', 'responsible');
-  fd.set('username', 'novichok1');
-  fd.set('password', 'parol123');
-  fd.set('firstName', 'Новичок');
-  fd.set('lastName', 'Тестов');
-  fd.set('middleName', 'Петрович');
-  fd.set('teamId', '3');
-  fd.set('avatar', avatarBlob(), 'a.png');
-  const r = await c.raw('POST', '/api/auth/register', { body: fd });
+  const r = await c.raw('POST', '/api/auth/register', { body: regForm({ username: 'novichok1' }) });
   assert.equal(r.status, 201, JSON.stringify(r.data));
-  assert.equal(r.data.user.role, 'responsible');
-  assert.equal(r.data.user.teamNumber, 3);
+  assert.equal(r.data.user.role, 'member');
+  assert.equal(r.data.user.teamId, null);
   assert.ok(r.data.csrfToken);
-  assert.ok(r.data.permissions.includes('duty.mark.team'));
   assert.ok(!r.data.permissions.includes('user.edit'));
   assert.ok(!r.data.permissions.includes('settings.manage'));
   c.csrf = r.data.csrfToken;
 
-  // повторный вход тем же логином
   const again = new Client();
   const r2 = await again.login('novichok1', 'parol123');
   assert.equal(r2.status, 200);
@@ -254,16 +266,9 @@ test('успешная регистрация создаёт ответстве�
 
 test('повторная регистрация того же логина отклоняется', async () => {
   const c = new Client();
-  const fd = new FormData();
-  fd.set('role', 'responsible');
-  fd.set('username', 'novichok1');
-  fd.set('password', 'parol123');
-  fd.set('firstName', 'Дубль');
-  fd.set('lastName', 'Логин');
-  fd.set('teamId', '3');
-  fd.set('avatar', avatarBlob(), 'a.png');
-  const r = await c.raw('POST', '/api/auth/register', { body: fd });
+  const r = await c.raw('POST', '/api/auth/register', { body: regForm({ username: 'novichok1' }) });
   assert.equal(r.status, 409);
+  assert.equal(r.data.code, 'LOGIN_TAKEN');
 });
 
 /* ══════════════ 2. Вход / выход / сессия ══════════════ */
@@ -450,20 +455,19 @@ test('староста не может изменить собственную �
   assert.equal(me.data.user.role, 'starosta');
 });
 
-test('единственного старосту нельзя понизить', async () => {
-  const c = new Client();
+test('понизить роль можно только если старост не последний', async () => {
   const fd = new FormData();
   fd.set('role', 'starosta');
-  fd.set('username', 'starosta2');
-  fd.set('password', 'starosta2');
-  fd.set('firstName', 'Второй');
+  fd.set('username', 'starostaX');
+  fd.set('password', 'starostaX1');
+  fd.set('firstName', 'Третий');
   fd.set('lastName', 'Староста');
   fd.set('avatar', avatarBlob(), 'a.png');
   const created = await starosta.raw('POST', '/api/users', { body: fd });
   assert.equal(created.status, 201, JSON.stringify(created.data));
   const newId = created.data.user.id;
-  // теперь старост двое — понизить можно
-  const ok = await starosta.patch(`/api/users/${newId}`, { role: 'member' });
+  // старост теперь не последний — понизить можно
+  const ok = await starosta.patch('/api/users/' + newId, { role: 'member' });
   assert.equal(ok.status, 200);
   assert.equal(ok.data.user.role, 'member');
 });

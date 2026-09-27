@@ -387,6 +387,9 @@ export function seed() {
     setSetting('duty_cycle', '1');
     setSetting('registration_open', '1');
     setSetting('seeded_at', ts);
+    // Коды приглашения: по ним на регистрации выбирают роль куратора или старосты.
+    setSetting('invite_code_curator', randomBytes(4).toString('hex').toUpperCase());
+    setSetting('invite_code_starosta', randomBytes(4).toString('hex').toUpperCase());
   });
   return true;
 }

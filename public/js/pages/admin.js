@@ -187,6 +187,58 @@ async function renderTeams(box) {
   box.appendChild(el('.card', { style: { padding: '0', border: 'none', boxShadow: 'none', background: 'transparent' } }, list));
 }
 
+/* ═══════════════════════ коды приглашения ═══════════════════════ */
+
+function inviteCodesCard() {
+  const body = el('.card-body', {}, el('.hint', {}, 'Загрузка кодов…'));
+  const card = el('.card', { style: { marginTop: '18px' } },
+    el('.card-head', {}, el('h3', {}, 'Коды приглашения')),
+    body,
+  );
+
+  const paint = (codes) => {
+    const row = (label, key, note) => {
+      const value = codes[key] ?? '—';
+      return el('.row.gap-2', { style: { marginTop: '10px' } },
+        el('div.grow', {},
+          el('.fw-700', {}, label),
+          el('.text-xs.text-mute', {}, note),
+        ),
+        el('code.code-chip', { style: { fontSize: '18px', letterSpacing: '3px' } }, value),
+      );
+    };
+    body.replaceChildren(
+      el('.hint', {}, 'На странице регистрации ученик выбирает роль «Куратор» или «Староста» и вводит этот код. Без кода регистрация создаёт обычного ученика без команды.'),
+      row('Куратор', 'invite_code_curator', 'Регистрация с правами куратора'),
+      row('Староста', 'invite_code_starosta', 'Регистрация с полными правами'),
+      el('button.btn.btn-soft', {
+        type: 'button', style: { marginTop: '16px' },
+        onclick: async (e) => {
+          const yes = await confirmDialog({
+            title: 'Выдать новые коды?',
+            text: 'Прежние коды перестанут работать. Сообщите новые коды тем, кто ещё не зарегистрировался.',
+            confirmText: 'Выдать новые',
+          });
+          if (!yes) return;
+          await withBusy(e.currentTarget, async () => {
+            try {
+              const res = await systemApi.regenerateInviteCodes();
+              paint(res.codes);
+              ok('Новые коды выданы');
+            } catch (error) { err(error.message); }
+          });
+        },
+      }, '🔄 Выдать новые коды'),
+    );
+  };
+
+  systemApi.inviteCodes()
+    .then((r) => paint(r.codes))
+    .catch((error) => body.replaceChildren(el('.warn-box', {}, error.message)));
+
+  return card;
+}
+
 /* ═══════════════════════ настройки ═══════════════════════ */
 
 async function renderSettings(box) {
@@ -245,6 +297,8 @@ async function renderSettings(box) {
     el('.card-head', {}, el('h3', {}, 'Настройки класса')),
     el('.card-body', {}, form),
   ));
+
+  box.appendChild(inviteCodesCard());
 
   box.appendChild(el('.card', { style: { marginTop: '18px' } },
     el('.card-head', {}, el('h3', {}, 'Опасная зона')),

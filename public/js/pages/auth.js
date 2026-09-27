@@ -3,19 +3,12 @@ import { el, formData, mount, humanDate } from '../lib/dom.js';
 import { authApi, ApiError } from '../lib/api.js';
 import { state, applySession, clearSession } from '../lib/store.js';
 import { navigate } from '../lib/router.js';
-import { toast, err, ok, field, withBusy, badge } from '../lib/ui.js';
+import { err, ok, field, withBusy } from '../lib/ui.js';
 
 const ROLE_CARDS = [
-  { role: 'starosta', label: 'Староста', icon: '★', desc: 'Полный доступ: расписание, ученики, роли, настройки', locked: true },
-  { role: 'curator', label: 'Куратор', icon: '◆', desc: 'Проверка дежурств, фотографий, объявления', locked: true },
-  { role: 'responsible', label: 'Ответственный', icon: '✔', desc: 'Отмечает команду, ведёт фото и дежурства', locked: false },
-];
-
-const DEMO = [
-  ['starosta', 'Староста'],
-  ['kurator', 'Куратор'],
-  ['otvet1', 'Ответственный'],
-  ['u01', 'Ученик'],
+  { role: 'member', label: 'Ученик', icon: '✔', desc: 'Отмечается в дежурстве, сдаёт фотоотчёт', code: false },
+  { role: 'curator', label: 'Куратор', icon: '◆', desc: 'Проверка дежурств, фотографий, объявления', code: true },
+  { role: 'starosta', label: 'Староста', icon: '★', desc: 'Полный доступ: расписание, ученики, роли, настройки', code: true },
 ];
 
 function authShell(...children) {
@@ -39,13 +32,7 @@ function authShell(...children) {
           ['✉️', 'Объявления всему классу'],
         ].map(([i, t]) => el('.auth-list-item', {}, el('span', {}, i), el('span', {}, t))),
       ),
-      el('.demo-accounts', {},
-        el('.label', {}, 'Демо-доступы (пароль = логин)'),
-        el('.demo-row', {}, DEMO.map(([login, label]) => el('button.kbd', {
-          type: 'button',
-          onclick: () => { sessionStorage.setItem('dh:fill', login); navigate('/login'); },
-        }, `${login} · ${label}`))),
-      ),
+
     ),
   );
 }
@@ -77,13 +64,6 @@ export async function welcomePage() {
             ? el('.warn-box', { style: { marginTop: '14px' } }, 'Регистрация новых пользователей закрыта старостой класса.')
             : null,
 
-          el('.demo-accounts', { style: { marginTop: '20px' } },
-            el('.label', {}, 'Демо-доступы для проверки'),
-            el('p.text-xs.text-mute', {}, 'Логин и пароль совпадают:'),
-            el('.demo-row', {}, DEMO.map(([login, label]) => el('button.kbd', {
-              type: 'button', onclick: () => { sessionStorage.setItem('dh:fill', login); navigate('/login'); },
-            }, `${login} · ${label}`))),
-          ),
 
           el('p.text-xs.text-soft', { style: { textAlign: 'center', marginTop: '18px' } },
             `Сегодня ${humanDate(new Date().toISOString().slice(0, 10))}`),
@@ -111,9 +91,6 @@ export async function loginPage() {
   const login = el('input.input', { name: 'username', autocomplete: 'username', required: true, placeholder: 'логин' });
   const password = el('input.input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true, placeholder: '••••••' });
   const submit = el('button.btn.btn-primary.btn-lg.btn-block', { type: 'submit' }, 'Войти');
-
-  const fill = sessionStorage.getItem('dh:fill');
-  if (fill) { sessionStorage.removeItem('dh:fill'); login.value = fill; password.value = fill; }
 
   const form = el('form', {
     onsubmit: async (e) => {
@@ -143,13 +120,7 @@ export async function loginPage() {
       el('h1.auth-title', { style: { marginTop: '14px' } }, 'Вход в систему'),
       el('p.auth-sub', {}, 'Введите логин и пароль, выданные старостой или куратором.'),
       el('.auth-card', { style: { marginTop: '18px' } }, form),
-      el('.demo-accounts', { style: { marginTop: '18px' } },
-        el('.label', {}, 'Быстрый вход (демо)'),
-        el('.demo-row', {}, DEMO.map(([l, label]) => el('button.kbd', {
-          type: 'button',
-          onclick: () => { login.value = l; password.value = l; submit.focus(); },
-        }, `${l} · ${label}`))),
-      ),
+
     ),
   );
 }
@@ -165,21 +136,14 @@ export async function registerPage() {
     ));
   }
 
-  // Состав команд нужен до регистрации — берём публичный список (без ФИО участников).
-  let teams = state.teams;
-  if (!teams.length) {
-    teams = (await authApi.teams().catch(() => ({ teams: [] }))).teams ?? [];
-  }
-
   const first = el('input.input', { name: 'firstName', required: true, placeholder: 'Иван', autocomplete: 'given-name' });
   const last = el('input.input', { name: 'lastName', required: true, placeholder: 'Петров', autocomplete: 'family-name' });
   const middle = el('input.input', { name: 'middleName', placeholder: 'Отчество (необязательно)' });
   const username = el('input.input', { name: 'username', required: true, placeholder: 'ivanpetrov', autocomplete: 'username', pattern: '[A-Za-z0-9_.-]{3,24}' });
   const password = el('input.input', { name: 'password', type: 'password', required: true, minlength: 6, autocomplete: 'new-password', placeholder: 'минимум 6 символов' });
   const confirm = el('input.input', { name: 'confirm', type: 'password', required: true, autocomplete: 'new-password' });
-  const team = el('select.select', { name: 'teamId', required: true },
-    el('option', { value: '' }, '— выберите команду —'),
-    teams.map((t) => el('option', { value: t.id }, t.name ?? `Команда №${t.number}`)));
+  // Команду на регистрации не выбирают: состав формирует староста через «Ученики».
+  const code = el('input.input', { name: 'code', placeholder: 'код приглашения', autocomplete: 'off' });
 
   const avatarFile = el('input', { type: 'file', name: 'avatar', accept: 'image/jpeg,image/png,image/webp,image/gif', required: true });
   const avatarBox = el('.uploader', {},
@@ -197,18 +161,22 @@ export async function registerPage() {
     mount(box, el('img', { src: url, alt: '', style: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' } }));
   });
 
-  let chosenRole = 'responsible';
+  let chosenRole = 'member';
+  const codeField = field('Код приглашения', code, { hint: 'Код выдаёт староста класса' });
   const roleWrap = el('.role-grid');
   const paintRoles = () => {
     for (const card of roleWrap.children) {
       card.classList.toggle('is-selected', card.dataset.role === chosenRole);
     }
+    // Код нужен только для ролей, которые нельзя получить самостоятельно.
+    const needsCode = Boolean(ROLE_CARDS.find((r) => r.role === chosenRole)?.code);
+    codeField.hidden = !needsCode;
+    code.required = needsCode;
   };
   for (const r of ROLE_CARDS) {
-    roleWrap.appendChild(el(`.role-card.card.card-pad-sm${r.locked ? '.is-locked' : ''}`, {
+    roleWrap.appendChild(el('.role-card.card.card-pad-sm', {
       dataset: { role: r.role },
       onclick: () => {
-        if (r.locked) { toast('Роль назначает действующий староста класса', 'warning'); return; }
         chosenRole = r.role;
         paintRoles();
       },
@@ -216,11 +184,10 @@ export async function registerPage() {
     el('.row.gap-1', {},
       el('.role-ico', {}, r.icon),
       el('div.grow', {},
-        el('.fw-700', {}, r.label, r.locked ? el('span.role-lock', { title: 'Назначается только старостой' }, ' 🔒') : null),
+        el('.fw-700', {}, r.label, r.code ? el('span.role-lock', { title: 'Нужен код приглашения' }, ' 🔑') : null),
         el('.text-xs.text-mute', {}, r.desc),
       ),
     ),
-    el('input', { type: 'hidden', name: 'role', value: chosenRole }),
     ));
   }
   paintRoles();
@@ -252,16 +219,17 @@ export async function registerPage() {
   },
   el('.grid.grid-2', {}, field('Имя', first, { required: true }), field('Фамилия', last, { required: true })),
   field('Отчество', middle),
-  el('.grid.grid-2', { style: { marginTop: '12px' } }, field('Логин', username, { required: true, hint: '3–24 символа: латиница, цифры, _ . -' }), field('Команда', team, { required: true })),
-  el('.grid.grid-2', { style: { marginTop: '12px' } }, field('Пароль', password, { required: true }), field('Повторите пароль', confirm, { required: true })),
+  el('.grid.grid-2', { style: { marginTop: '12px' } }, field('Логин', username, { required: true, hint: '3–24 символа: латиница, цифры, _ . -' }), field('Пароль', password, { required: true })),
+  field('Повторите пароль', confirm, { required: true }),
   el('.divider'),
   el('.label', {}, 'Ваша роль'),
   roleWrap,
+  codeField,
   el('.divider'),
   field('Фото профиля', avatarBox, { required: true, hint: 'JPEG, PNG, WebP или GIF, до 6 МБ. Фото обязательно — по нему вас узнают.' }),
   el('div', { style: { marginTop: '20px' } }, submit),
   el('p.text-xs.text-mute', { style: { marginTop: '12px', textAlign: 'center' } },
-    'Регистрируясь, вы становитесь ответственным за дежурство выбранной команды. Староста может изменить вашу роль позже.'),
+    'Команду назначит староста класса в разделе «Ученики» — при регистрации выбирать её не нужно.'),
   );
 
   return authShell(el('div', { style: { maxWidth: '560px', width: '100%' } },

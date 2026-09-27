@@ -3,6 +3,7 @@
  * Куратор сюда не попадает: у него нет permission settings.manage / audit.view.
  */
 import express from 'express';
+import { randomBytes } from 'node:crypto';
 import { q, setSetting, audit, getSetting } from '../db.js';
 import { requireAuth, requirePermission, clientIp } from '../middleware.js';
 import { str, inOneOf, bad, notFound, HttpError, todayStr } from '../util.js';
@@ -10,6 +11,17 @@ import { isStarosta, ROLES, ROLE_LABELS } from '../permissions.js';
 
 const router = express.Router();
 router.use(requireAuth);
+
+/** Гарантирует, что оба кода приглашения существуют (старые базы их не имели). */
+function ensureInviteCodes() {
+  const codes = {};
+  for (const key of ['invite_code_curator', 'invite_code_starosta']) {
+    let v = getSetting(key);
+    if (!v) { v = randomBytes(4).toString('hex').toUpperCase(); setSetting(key, v); }
+    codes[key] = v;
+  }
+  return codes;
+}
 
 const EDITABLE = {
   class_name: { label: 'Название класса', max: 20, def: '5 «Г»' },
@@ -48,6 +60,23 @@ router.put('/settings', requirePermission('settings.manage'), (req, res, next) =
     for (const [k, meta] of Object.entries(EDITABLE)) values[k] = getSetting(k, meta.def);
     res.json({ ok: true, values });
   } catch (err) { next(err); }
+});
+
+/* GET /api/system/invite-codes — коды для самостоятельной регистрации
+   в роли куратора/старосты. Создаются при первом обращении. */
+router.get('/invite-codes', requirePermission('settings.manage'), (req, res) => {
+  res.json({ codes: ensureInviteCodes() });
+});
+
+/* POST /api/system/invite-codes/regenerate — выдать новые коды */
+router.post('/invite-codes/regenerate', requirePermission('settings.manage'), (req, res) => {
+  const codes = {
+    invite_code_curator: randomBytes(4).toString('hex').toUpperCase(),
+    invite_code_starosta: randomBytes(4).toString('hex').toUpperCase(),
+  };
+  for (const [k, v] of Object.entries(codes)) setSetting(k, v);
+  audit(req.user.id, 'system.invite_codes.regenerate', 'settings', '', { ...codes }, clientIp(req));
+  res.json({ ok: true, codes });
 });
 
 /* GET /api/system/audit — журнал действий */

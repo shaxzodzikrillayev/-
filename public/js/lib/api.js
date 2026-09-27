@@ -162,6 +162,8 @@ export const statsApi = {
 export const systemApi = {
   settings: () => api.get('/api/system/settings'),
   saveSettings: (body) => api.put('/api/system/settings', body),
+  inviteCodes: () => api.get('/api/system/invite-codes'),
+  regenerateInviteCodes: () => api.post('/api/system/invite-codes/regenerate', {}),
   audit: (limit = 120) => api.get(`/api/system/audit?limit=${limit}`),
   overview: () => api.get('/api/system/overview'),
 };

@@ -1773,3 +1773,12 @@ table.tbl tbody tr:last-child td { border-bottom: 0; }
 @media (max-width: 560px) {
   .content-guest { padding: 16px 12px 32px; }
 }
+
+.code-chip {
+  font-family: var(--font-mono, monospace);
+  background: var(--brand-50, #eef2ff);
+  border: 1px solid var(--brand-200, #c7d2fe);
+  border-radius: var(--r-sm, 8px);
+  padding: 6px 12px;
+  user-select: all;
+}
