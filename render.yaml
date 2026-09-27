@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: duty-hub
+    runtime: docker
+    plan: starter          # нужен именно он: ниже нет постоянного диска
+    healthCheckPath: /api/health
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: DUTYHUB_DATA
+        value: /app/data
+      - key: DUTYHUB_UPLOADS
+        value: /app/data/uploads
+      # Обязательно задайте свой: Render подставляет переменные в разделе Environment.
+      - key: DUTYHUB_SECRET
+        generateValue: true
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1

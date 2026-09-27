@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.github
+data
+uploads
+tests
+Dockerfile
+docker-compose.yml
+fly.toml
+render.yaml
+railway.json
+README.md
+*.md

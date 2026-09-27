@@ -1,0 +1,44 @@
+# Fly.io — приложение с постоянным томом.
+#   fly launch --no-deploy --copy-config
+#   fly volumes create dutyhub_data --region fra --size 1
+#   fly secrets set DUTYHUB_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))")
+#   fly deploy
+app = "duty-hub"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  HOST = "0.0.0.0"
+  DUTYHUB_DATA = "/app/data"
+  DUTYHUB_UPLOADS = "/app/data/uploads"
+
+[mounts]
+  source = "dutyhub_data"
+  destination = "/app/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
